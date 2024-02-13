@@ -1,224 +1,231 @@
 ;; Global Variables
-globals [ adj-matrix encoding-variable network-variable distinct-colors]
+globals [ adj-matrix encoding-variable network-variable distinct-colors current-H evenly-spaced-list number-rewired new-states]
 turtles-own [encoding new-state]
+links-own [rewired?]
 
 ;; Setup
 to setup
-
   ca
   reset-ticks
-
   define-encoding
   setup-network
 end
 
 
+;to-report custom-encoding
+  ;Put the variable encodings here.
+  ;The syntax of the Ising model would be [-1 1], and for the Blume-capel model [-1 0 1]
+  ;The following syntax can be used create N values from 1 to N: n-values N [i -> i + 1]
+  ;The following syntax creates N values spaces between -1 and 1: n-values N [i -> (2 * i / (n-ordinal/potts-states - 1)) - 1]
+  ;report [0 1]
+;end
+
+
+;to-report H-custom [state]
+
+ ;First we define the interaction term in NetLogo syntax.
+ ;The interaction used bythe Ising model and others would be: let neighbor-sum sum [encoding] of link-neighbors
+
+ ;We can then use the variable "neighbor-sum" in the Hamiltonian as follows: report interaction-strength * state * neighbor-sum + state * alpha
+
+ ; let neighbor-sum sum [encoding] of link-neighbors
+ ; report interaction-strength * state * neighbor-sum + state * alpha
+;end
+
+
+
+
 to define-encoding
-
-    (ifelse model-chooser = "Ising" [
+  if model-chooser = "Ising" [
     set encoding-variable [-1 1]
-  ] model-chooser = "Percolation" [
+    set current-H "H-Ising"
+  ]
+
+  if model-chooser = "Percolation" [
     set encoding-variable [0 1]
-  ] (model-chooser = "Blume-capel") [
+    set current-H "H-Ising"
+    ; Define your H function for Percolation here if you have one.
+  ]
+
+  if model-chooser = "Blume-capel" [
     set encoding-variable [-1 0 1]
-  ] (model-chooser = "Potts") [
-    set encoding-variable (n-values n-ordinal/potts-states [i -> i + 1] )
+    set current-H "H-BC"
+  ]
+
+  if model-chooser = "Potts" [
+    set encoding-variable (n-values n-ordinal/potts-states [i -> i + 1])
     set distinct-colors generate-n-distinct-colors n-ordinal/potts-states
-  ] (model-chooser = "Ordinal") [
-    set encoding-variable (n-values n-ordinal/potts-states [i -> (2 * i / (n-ordinal/potts-states - 1)) - 1])  ;rescaling from range -1 to 1
-  ] (model-chooser = "XY") [
-     set encoding-variable (random-float 2) - 1 ;NOT USED
-  ])
+    set current-H "H-Potts"
+  ]
 
+  if model-chooser = "Ordinal" [
+    set encoding-variable (n-values n-ordinal/potts-states [i -> (2 * i / (n-ordinal/potts-states - 1)) - 1])
+    set current-H "H-Ising"
+  ]
 
+  if model-chooser = "Continuous" [
+    ;continous model is approximated by a 1000 step ordinal. This option is used instead of a FLOAT since the update requires the encodings to be in a list format.
+    ; set encoding-variable [-1 1]
+    ;set current-H "H-Ising"
+    create-evenly-spaced-list-1000
+    set encoding-variable evenly-spaced-list;(n-values 1000 [i -> (2 * i / (n-ordinal/potts-states - 1)) - 1])
+    set current-H  "H-continuous"
+  ]
+
+  ;if model-chooser = "Custom" [
+  ;  set encoding-variable custom-encoding ;CUSTOM: make list of variable values
+  ;  set current-H "H-custom"
+  ;]
 end
+
 
 ;; Setup Nodes
 to setup-network
-
-  (ifelse network-chooser = "Lattice" [
-
-    ask  patches
-    [
+  if network-chooser = "Lattice" [
+    ask patches [
       sprout 1 [
-        set shape "circle"
-        set size 1
-        ifelse model-chooser = "XY" [set encoding (random-float 2) - 1][set encoding one-of encoding-variable] ;;
+        set encoding one-of encoding-variable
         create-links-with turtles-on neighbors4
+        set shape "pentagon"
+        set size 1
       ]
     ]
-  ]network-chooser = "Fully-connected" [
+  ]
 
-   create-turtles 20 [
-      set shape "circle"
+
+  if network-chooser = "Small-world" [
+
+    set number-rewired 0
+
+    create-turtles 100 [
+      set encoding one-of encoding-variable
+      set shape "pentagon"
       set size 1
-      ifelse model-chooser = "XY" [set encoding (random-float 2) - 1][set encoding one-of encoding-variable] ;;
+      wire-lattice
+    ]
+
+    repeat rewire-times [rewire-one]
+
+    layout-circle (sort turtles) max-pxcor - 1
+  ]
+
+
+  if network-chooser = "Fully-connected" [
+   create-turtles 20 [
+      set shape "pentagon"
+      set size 1
+      set encoding one-of encoding-variable
       create-links-with other turtles
       fd 10
-
     ]
-  ])
-
+  ]
   recolor
-
-
 end
+
 
 ;; Update Procedure
+
 to go
-
   repeat updates-per-plot-update [
-    (ifelse model-chooser = "Ising" [
-      Ising-update
-    ] model-chooser = "Blume-capel" [
-      BC-update-MH
-    ] model-chooser = "Percolation" [
-      percolation-update
-    ] model-chooser = "Potts" [
-      Potts-update
-    ] model-chooser = "Ordinal" [
-     Ordinal-update
-    ] model-chooser = "XY" [
-      XY-update
-    ])
+    glauber-update
   ]
-
   recolor
-
-  tick-advance updates-per-plot-update  ;; use `tick-advance`, as we are updating 1000 patches at a time
+  tick-advance updates-per-plot-update
   update-plots
-
 end
 
 
-to Ordinal-update
-    ask one-of turtles [
-
-    let new-states remove encoding encoding-variable
-    set new-state one-of new-states
-
-    let neighbor-sum sum [encoding] of link-neighbors ;HOW DOES THE ORDINAL MODEL WORK?
-
-    let delta_E (interaction-strength * neighbor-sum * new-state + alpha * new-state - (interaction-strength * neighbor-sum * encoding + encoding * alpha)) * -1
-
-    if (delta_E <= 0) or ( (1 / (beta + 0.000001)) > 0 and (random-float 1.0 < exp ((- delta_E) / (1 / (beta + 0.000001))))) [
-      set encoding (new-state)
-    ]
-  ]
-end
-
-to Ising-update
+to glauber-update
   ask one-of turtles [
-      ;; Calculate delta_E and transition_prob for Ising Model - based on NetLogo Model's library Ising model
-    let neighbor-sum sum [encoding] of link-neighbors
-    let delta_E 2 * (encoding * neighbor-sum  + encoding * alpha)
+    ;First we draw a random new state
+    ;remove current state from list of possible states
 
-
-    ;change in alignment s if i is flipped
-    let E_diff beta * (-2 * (encoding * neighbor-sum  + encoding * alpha))
-
-    ifelse E_diff >= 0 [set encoding (- encoding)][
-      ;pick new state based on probabilities
-      if (random-float 1) < exp(e_diff) [set encoding (- encoding)]
+    ifelse model-chooser = "continuous" [
+      set new-state (random-float 2) - 1
+    ][
+      set new-state remove encoding encoding-variable
+      ;draw new state
+      set new-state one-of new-state
     ]
 
-  ]
-end
+    ;compute the alignment difference assuming new and old state
+    let E_diff beta * ((runresult (word current-H " " new-state)) - (runresult (word current-H " " encoding)))
 
-
-to percolation-update
-  ask one-of turtles [
-
-    ifelse encoding = 1[
-      set new-state 0][
-      set new-state 1
-    ]
-
-      ;; Calculate delta_E and transition_prob for Ising Model - based on NetLogo Model's library Ising model
-    let neighbor-sum sum [encoding] of link-neighbors
-    let E_diff beta * (new-state * neighbor-sum  + new-state * alpha - (encoding * neighbor-sum  + encoding * alpha))
-
+    ;print exp E_diff
+    ;determine if the new state is kept
     ifelse E_diff >= 0 [set encoding new-state][
-      ;pick new state based on probabilities
-      if (random-float 1) < exp(e_diff) [set encoding new-state]
-    ]
-  ]
-
-end
-
-
-to BC-update-MH
-  ; algorithm from https://pure.coventry.ac.uk/ws/portalfiles/portal/43549891/Binder1.pdf
-  ask one-of turtles [
-
-    if encoding = 1 [
-      set new-state one-of [-1 0]
-    ]
-    if encoding = 0 [
-      set new-state one-of [-1 1]
-    ]
-    if encoding = -1[
-      set new-state one-of [0 1]
-    ]
-
-    let neighbor_sum (sum [encoding] of link-neighbors)
-
-
-    let current_alignment encoding * neighbor_sum + alpha * encoding - delta * encoding * encoding
-    let new-alignment new-state * neighbor_sum + alpha * new-state - delta * new-state * new-state
-
-    ;change in alignment s if i is flipped
-    let E_diff beta * (new-alignment - current_alignment)
-
-
-    ifelse E_diff >= 0 [set encoding new-state][
-      ;pick new state based on probabilities
-      if (random-float 1) < exp(e_diff) [set encoding new-state]
-    ]
-  ]
-
-
-end
-
-to Potts-update
-  ask one-of turtles [
-
-    let new-states remove encoding encoding-variable
-    set new-state one-of new-states
-
-      ;; Calculate delta_E and transition_prob for Ising Model - based on NetLogo Model's library Ising model
-    let neighbor-old-state count link-neighbors with [encoding = [encoding] of myself]
-    let neighbor-new-state count link-neighbors with [encoding = new-state]
-
-    let E_diff beta * (interaction-strength * neighbor-new-state - interaction-strength * neighbor-new-state)
-
-
-    ifelse E_diff >= 0 [set encoding new-state][
-      ;pick new state based on probabilities
       if (random-float 1) < exp(E_diff) [set encoding new-state]
     ]
   ]
-
 end
 
 
-to XY-update
-    ask one-of turtles [
+to-report H-Ising [state]
+  let neighbor-sum sum [encoding] of link-neighbors
+  ;print neighbor-sum
+  report interaction-strength * state * neighbor-sum + state * alpha
+end
 
-    set new-state (random-float 2) - 1
+to-report H-BC [state]
+  let neighbor-sum sum [encoding] of link-neighbors
+  report interaction-strength * state * neighbor-sum + alpha * state - delta * state * state
+end
 
-      ;; Calculate delta_E and transition_prob for Ising Model - based on NetLogo Model's library Ising model
-    let neighbor-sum sum [encoding] of link-neighbors
+to-report H-Potts [state]
+  let neighbor-sum count link-neighbors with [encoding = state]
+  ;let neighbor-sum count link-neighbors with [encoding = state]
+  report interaction-strength * neighbor-sum + alpha * state
+end
 
-    let E_diff beta * (interaction-strength * neighbor-sum * new-state + alpha * new-state - (interaction-strength * neighbor-sum * encoding + encoding * alpha))
+to-report H-Continuous[state]
+;let energy 0
+  ;print state
+  ;ask link-neighbors [
+  ;  let neighbor-state [encoding] of self
+  ;  ;print encoding
+  ;  set energy energy + cos((state + 1) * 180 - (neighbor-state + 1) * 180) ;cos uses degrees
 
-    ifelse E_diff >= 0 [set encoding new-state][
-      ;pick new state based on probabilities
-      if (random-float 1) < exp(E_diff) [set encoding new-state]
-    ]
+  ;]
+  ;print energy
+
+   let neighbor-sum sum [encoding] of link-neighbors
+  ;print neighbor-sum
+  report interaction-strength * state * neighbor-sum + state * alpha
+
+  ;report energy
+end
+
+
+to-report custom-H [state]
+
+  ;Ising, BC, Continuousinteraction:
+  let neighbor-sum sum [state] of link-neighbors
+
+  ;Potts interaction term
+  ;let neighbor-old-state count link-neighbors with [encoding = [encoding] of myself]
+  ;let neighbor-new-state count link-neighbors with [encoding = [new-state] of myself]
+
+  report state * neighbor-sum + alpha * state - delta * state * state
+end
+
+
+
+to create-evenly-spaced-list-1000
+  let num-points 100
+  let min-value -1
+  let max-value 1
+  let step-size (max-value - min-value) / (num-points - 1)
+  set evenly-spaced-list []
+
+  ;; Loop to generate the evenly spaced values
+  let current-value min-value
+  repeat num-points [
+    set evenly-spaced-list lput current-value evenly-spaced-list
+    set current-value current-value + step-size
   ]
 
-
+  print evenly-spaced-list
+  ;report evenly-spaced-list
 end
 
 
@@ -227,12 +234,74 @@ to recolor
 
   ifelse model-chooser = "Potts" [
     ask turtles [set color item encoding distinct-colors]
-
   ][
     ask turtles [set color map-state-to-color encoding]
   ]
 
 end
+
+
+
+;;;;;;; Next 4 functions relate to small-world network formation ;;;;;;
+
+to wire-lattice
+  ; iterate over the turtles
+  let n 0
+  while [ n < count turtles ] [
+    ; make edges with the next two neighbors
+    ; this makes a lattice with average degree of 4
+    make-edge turtle n
+              turtle ((n + 1) mod count turtles)
+              "default"
+    ; Make the neighbor's neighbor links curved
+    make-edge turtle n
+              turtle ((n + 2) mod count turtles)
+              "curve"
+    set n n + 1
+  ]
+  ; Because of the way NetLogo draws curved links between turtles of ascending
+  ; `who` number, two of the links near the top of the network will appear
+  ; flipped by default. To avoid this, we used an inverse curved link shape
+  ; ("curve-a") which makes all of the curves face the same direction.
+  ;ask link 0 (count turtles - 2) [ set shape "curve-a" ]
+  ;ask link 1 (count turtles - 1) [ set shape "curve-a" ]
+end
+
+to make-edge [ node-A node-B the-shape ]
+  ask node-A [
+    create-link-with node-B  [
+      ;set shape the-shape
+      set rewired? false
+    ]
+  ]
+end
+
+to rewire-one
+
+  let potential-edges links with [ not rewired? ]
+  ifelse any? potential-edges [
+    ask one-of potential-edges [ rewire-me ]
+    ; Calculate the new statistics and update the plots
+  ]
+  [ user-message "all edges have already been rewired once" ]
+end
+to rewire-me ; turtle procedure
+  ; node-A remains the same
+  let node-A end1
+  ; as long as A is not connected to everybody
+  if [ count link-neighbors ] of end1 < (count turtles - 1) [
+    ; find a node distinct from A and not already a neighbor of "A"
+    let node-B one-of turtles with [ (self != node-A) and (not link-neighbor? node-A) ]
+    ; wire the new edge
+    ask node-A [ create-link-with node-B [ set color cyan set rewired? true ] ]
+
+    set number-rewired number-rewired + 1
+    die ; remove the old edge
+  ]
+end
+
+
+
 
 
 to-report map-state-to-color [s]
@@ -292,26 +361,26 @@ to-report sum-of-spins
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-401
-20
-853
-473
+630
+10
+1005
+386
 -1
 -1
-5.4815
+8.961
 1
 10
 1
 1
 1
 0
+0
+0
 1
-1
-1
--40
-40
--40
-40
+-20
+20
+-20
+20
 0
 0
 1
@@ -319,25 +388,25 @@ ticks
 30.0
 
 SLIDER
-0
-204
-172
-237
+7
+400
+161
+433
 beta
 beta
 0
 5
-5.0
+2.34
 0.01
 1
 NIL
 HORIZONTAL
 
 BUTTON
-0
-368
-66
-401
+560
+164
+626
+197
 go
 go
 NIL
@@ -351,35 +420,35 @@ NIL
 1
 
 SLIDER
-150
+8
+77
+157
 110
-320
-143
 n-ordinal/potts-states
 n-ordinal/potts-states
 2
 20
-7.0
+5.0
 1
 1
 NIL
 HORIZONTAL
 
 CHOOSER
-0
-64
-149
-109
+7
+201
+156
+246
 network-chooser
 network-chooser
-"Lattice" "Fully-connected"
-0
+"Lattice" "Fully-connected" "Small-world"
+2
 
 BUTTON
-0
-334
-66
-369
+560
+130
+626
+165
 setup
 setup
 NIL
@@ -393,10 +462,10 @@ NIL
 1
 
 BUTTON
-0
-401
-66
-434
+560
+197
+626
+230
 go
 go
 T
@@ -410,11 +479,11 @@ NIL
 1
 
 PLOT
-972
-248
-1172
-398
-plot 1
+49
+560
+249
+710
+Average node value over time
 Time
 Sum of spins
 0.0
@@ -428,35 +497,25 @@ PENS
 "default" 1.0 0 -16777216 true "" "plot sum-of-spins"
 
 SLIDER
-0
-452
-211
-485
+728
+388
+920
+421
 updates-per-plot-update
 updates-per-plot-update
 0
 2000
-2000.0
+520.0
 1
 1
 NIL
 HORIZONTAL
 
-TEXTBOX
-4
-239
-154
-257
-2d Ising critical beta = 0.44
-11
-0.0
-1
-
 SLIDER
-0
-171
-172
-204
+6
+368
+161
+401
 alpha
 alpha
 -10
@@ -468,35 +527,35 @@ NIL
 HORIZONTAL
 
 SLIDER
-171
-171
-343
-204
+7
+431
+161
+464
 delta
 delta
 0
 5
-1.0
+0.0
 0.1
 1
 NIL
 HORIZONTAL
 
 CHOOSER
-0
-109
-148
-154
+8
+32
+156
+77
 model-chooser
 model-chooser
-"Ising" "Percolation" "Blume-capel" "Potts" "Ordinal" "XY"
-5
+"Ising" "Percolation" "Blume-capel" "Potts" "Ordinal" "Continuous" "Custom"
+3
 
 SLIDER
-172
-204
-352
-237
+7
+464
+161
+497
 interaction-strength
 interaction-strength
 0
@@ -507,12 +566,171 @@ interaction-strength
 NIL
 HORIZONTAL
 
+PLOT
+248
+560
+448
+710
+Histogram of node values
+NIL
+NIL
+0.0
+1.0
+0.0
+10.0
+true
+false
+";set-plot-x-range ((min encoding-variable) - 1) ((max encoding-variable) + 1)\n;set-plot-y-range 0 count turtles\n;set-histogram-num-bars 7" "set-plot-x-range ((min encoding-variable) - 1) ((max encoding-variable) + 1)"
+PENS
+"default" 1.0 1 -16777216 true "" "histogram [encoding] of turtles\n"
+
+PLOT
+447
+560
+647
+710
+Average value and delta
+NIL
+NIL
+0.0
+10.0
+-1.0
+1.0
+true
+false
+"" "%set-plot-y-range ((min encoding-variable) - 0.1) ((max encoding-variable) + 0.1)"
+PENS
+"default" 1.0 0 -16777216 true "" "plotxy delta sum-of-spins"
+
+PLOT
+647
+560
+847
+710
+Average value and alpha
+NIL
+NIL
+0.0
+10.0
+-1.0
+1.0
+true
+false
+"" "%set-plot-y-range ((min encoding-variable) - 0.1) ((max encoding-variable) + 0.1)"
+PENS
+"default" 1.0 0 -16777216 true "" "plotxy alpha sum-of-spins"
+
 TEXTBOX
+166
 177
-240
-327
-268
-interaction-strength works for: Potts
+333
+338
+Network options:\n\nLattice: a grid structure where all nodes are connected to its four immediate neighbors. The size is n x-coordinates by n y-coordinates (size of grid can be changed by right-clicking the visualisation)\n
+11
+0.0
+1
+
+SLIDER
+7
+245
+156
+278
+rewire-times
+rewire-times
+0
+100
+2.0
+1
+1
+NIL
+HORIZONTAL
+
+TEXTBOX
+342
+147
+516
+343
+\nSmall-world: 100 nodes that are connected to their immediate two neighbors in each direction of the circle. Then \"rewire-time\" controls the amount of connections that are randomly re-wired in order to obtain a small-world network.\n\nFully connected: 20 nodes where all nodes are fully connected.
+11
+0.0
+1
+
+TEXTBOX
+165
+46
+336
+102
+Model-chooser: \n\nchooses the Hamiltonian and encoding of variables. 
+11
+0.0
+1
+
+TEXTBOX
+174
+362
+334
+498
+Parameters:\n\nBeta: the alignment weight or inverse-temperature parameter (modulates over both interactions and external fields).\n\nAlpha: the external field.
+11
+0.0
+1
+
+TEXTBOX
+344
+26
+494
+110
+The Potts and ordinal model uses an additional argument \"n-ordinal/potts-states\" to control the number of states.
+11
+0.0
+1
+
+TEXTBOX
+346
+353
+496
+493
+\nInteraction-strength: modulates the strength of connections.\n\nDelta: the cost of notes for being present i.e. not in state 0 (only applies to models with a zeroth state).\n
+11
+0.0
+1
+
+TEXTBOX
+729
+423
+923
+507
+How many times are nodes updated before the visualisation is updated. Lower values give more dynamic but slower simulations
+11
+0.0
+1
+
+TEXTBOX
+509
+528
+811
+598
+The delta and alpha plots are useful to detect hysteresis: asymmetries in jumps between stable states
+11
+0.0
+1
+
+TEXTBOX
+22
+339
+480
+357
+---------------------------------------------------------------------------
+11
+0.0
+1
+
+TEXTBOX
+25
+130
+511
+148
+---------------------------------------------------------------------------
 11
 0.0
 1
@@ -520,27 +738,32 @@ interaction-strength works for: Potts
 @#$#@#$#@
 ## WHAT IS IT?
 
-(a general understanding of what the model is trying to show or explain)
+This simulation is associated with the article "XXXXX" and allows researcher to run dynamic simulations of various probabilistic network models. It allows researchers to freely choose between models, network structures, and parameters in order to see in real-time how their interplay shapes the state of the system.
 
 ## HOW IT WORKS
 
-(what rules the agents use to create the overall behavior of the model)
+First a model needs to be selected. The options are the classic (-1,1) Ising model, percolation (0,1) Ising model, BLume-capel (-1, 0, 1), ordinal Ising model, continuous Ising model, and Potts model. For the Potts and ordinal model, its also required to choose the number of states that variabls can take. The ordinal model creates n states between -1 and 1.
+
+Second, a lattice, small-world, or fully-connected network strucutre can be chosen. The small-world structure also assumes a number of links to be re-wired. If this parameter is set to 0 the network is circular, if the re-wiring parameter is set to 4 * 100 all links will be re-wired leading to a random network. 
+
+Lastly, the various parameters associated with the models can be chosen. Importantly, these parameters can also be varied while the models run! 
 
 ## HOW TO USE IT
 
-(how to use the model, including a description of each of the items in the Interface tab)
+Once a model and network is chosen the user has to press "setup" to prepare the simulation. It is then run by either clicking "GO" for a single update (rarely interesting) or "GO with infinity sign" for a continuous update of the model.
 
 ## THINGS TO NOTICE
 
-(suggested things for the user to notice while running the model)
+Beside the main visualisation, there are also four plots that can assist with understanding the state of system as a function various parameters. 
 
 ## THINGS TO TRY
 
-(suggested things for the user to try to do (move sliders, switches, etc.) with the model)
+The main functionality lies in changing the parametes beta, alpha, delta, interaction-strength, and notice how changes to these states influence the overall state of the system. Are there aligned statess? How many? Is it random? How long does it take for it converge to new states? 
+
 
 ## EXTENDING THE MODEL
 
-(suggested things to add or change in the Code tab to make the model more complicated, detailed, accurate, etc.)
+The simulation also allows researcher to construct their own Hamiltonians. In my opinion, this is easily but not trvilially done. Under the Code tab, there is a section where users can add their custom H and encoding for variables using NetLogo code. In comments there are examples of how the other models are implemented. 
 
 ## NETLOGO FEATURES
 
